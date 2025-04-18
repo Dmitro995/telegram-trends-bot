@@ -24,11 +24,16 @@ pytrends = TrendReq(hl='en-US', tz=0)
 
 # Helpers
 def send_telegram(text, reply_markup=None):
-    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': text,
+        'parse_mode': 'HTML'
+    }
     if reply_markup:
         payload['reply_markup'] = json.dumps(reply_markup)
     requests.post(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage', data=payload)
 
+# Export to Excel
 def export_excel():
     if not recent:
         return None
@@ -39,18 +44,19 @@ def export_excel():
 
 # Brand filter
 def is_new_brand(q):
-    q = q.lower()
-    if any(kw in q for kw in ['casino', 'bet', 'play', 'win']):
+    q_lower = q.lower()
+    if any(kw in q_lower for kw in ['casino', 'bet', 'play', 'win']):
         return True
     return False
 
 # Fetch new casinos
- def fetch_new_casinos():
+def fetch_new_casinos():
     tf = timeframes[CURRENT_TIMEFRAME_KEY]
     try:
         pytrends.build_payload(['online casino'], timeframe=tf)
         related = pytrends.related_queries().get('online casino', {}).get('rising')
-    except:
+    except Exception as e:
+        send_telegram(f"⚠️ Ошибка при fetch_new_casinos: {e}")
         return
     if related is None or related.empty:
         return
@@ -74,11 +80,13 @@ def loop():
 def webhook():
     global CURRENT_TIMEFRAME_KEY, ENABLED
     data = request.json
+    # Inline callback
     if 'callback_query' in data:
         cmd = data['callback_query']['data']
+        msg = None
         if cmd in timeframes:
             CURRENT_TIMEFRAME_KEY = cmd
-            msg = f"⏱ Период: {cmd}"
+            msg = f"⏱ Период установлен: {cmd}"
         elif cmd == 'toggle':
             ENABLED = not ENABLED
             msg = f"🔄 Бот {'включён' if ENABLED else 'отключён'}"
@@ -89,21 +97,34 @@ def webhook():
             path = export_excel()
             if path:
                 with open(path, 'rb') as f:
-                    requests.post(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument', files={'document': f}, data={'chat_id': TELEGRAM_CHAT_ID})
+                    requests.post(
+                        f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument',
+                        files={'document': f},
+                        data={'chat_id': TELEGRAM_CHAT_ID}
+                    )
                 msg = "📥 Файл с трендами отправлен"
             else:
                 msg = "Нет данных для экспорта"
-        else:
-            return {'ok': True}
-        requests.post(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery', data={'callback_query_id': data['callback_query']['id'], 'text': msg})
-        send_telegram(msg)
+        if msg:
+            requests.post(
+                f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery',
+                data={'callback_query_id': data['callback_query']['id'], 'text': msg}
+            )
+            send_telegram(msg)
         return {'ok': True}
 
     text = data.get('message', {}).get('text', '')
     if text == '/start':
-        kb = [[{'text':'🔍 Найти казино', 'callback_data':'fetch'}],
-             [{'text':'⌛️ Интервал', 'callback_data':'1d'},{'text':'7d','callback_data':'7d'},{'text':'30d','callback_data':'30d'}],
-             [{'text':'💾 Excel', 'callback_data':'excel'},{'text':'🔄 Вкл/Выкл','callback_data':'toggle'}]]
+        kb = [[
+            {'text': '🔍 Найти казино', 'callback_data': 'fetch'}
+        ], [
+            {'text': '⌛️ 1д', 'callback_data': '1d'},
+            {'text': '⏳ 7д', 'callback_data': '7d'},
+            {'text': '⏱ 30д', 'callback_data': '30d'}
+        ], [
+            {'text': '💾 Excel', 'callback_data': 'excel'},
+            {'text': '🔄 Вкл/Выкл', 'callback_data': 'toggle'}
+        ]]
         send_telegram('Выберите действие:', {'inline_keyboard': kb})
     return {'ok': True}
 
