@@ -13,6 +13,11 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = int(os.getenv('TELEGRAM_CHAT_ID', '0'))
 app = Flask(__name__)
 
+# Health check
+@app.route('/', methods=['GET'])
+def index():
+    return 'Bot is running', 200
+
 # State
 timeframes = {'1d': 'now 1-d', '7d': 'now 7-d', '30d': 'now 30-d'}
 CURRENT_TIMEFRAME_KEY = '1d'
