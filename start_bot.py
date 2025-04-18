@@ -90,20 +90,17 @@ def export_to_xlsx() -> str:
 def check_trends():
     log(f"DEBUG: Запускаю check_trends() timeframe={CURRENT_TIMEFRAME}, geo={CURRENT_GEO}")
     for kw in KEYWORDS:
-        # Шаг 1: build_payload для каждого слова
         try:
             pytrends.build_payload([kw], geo=CURRENT_GEO, timeframe=CURRENT_TIMEFRAME)
         except Exception as e:
             log(f"⚠️ Ошибка build_payload для '{kw}': {e}")
             continue
-        # Шаг 2: related_queries
         try:
             related = pytrends.related_queries()
         except Exception as e:
             log(f"⚠️ Ошибка related_queries для '{kw}': {e}")
             continue
-        log(f"DEBUG: Для '{kw}' related type={type(related)}, keys={list(related.keys())}")
-        # Шаг 3: извлечение rising
+        log(f"DEBUG: Для '{kw}' related keys={list(related.keys())}")
         rising = related.get(kw, {}).get('rising')
         if rising is None:
             log(f"DEBUG: rising is None для '{kw}'")
@@ -112,7 +109,6 @@ def check_trends():
             log(f"DEBUG: rising пуст для '{kw}'")
             continue
         log(f"DEBUG: Для '{kw}' найдено {len(rising)} трендов")
-        # Шаг 4: обработка каждой строки
         for _, row in rising.iterrows():
             q_val, val = row['query'], row['value']
             if (VAL_FILTER_ENABLED and val < MIN_TREND_VALUE) or q_val in checked_queries:
@@ -120,12 +116,8 @@ def check_trends():
             if FILTER_MODE and not is_probable_new_brand(q_val):
                 continue
             checked_queries.add(q_val)
-            info = {
-                "keyword": kw,
-                "query": q_val,
-                "value": val,
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
+            info = {"keyword": kw, "query": q_val, "value": val,
+                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             recent_trends.append(info)
             msg = (f"🆕 Новый запуск по '{kw}' в {CURRENT_GEO} "
                    f"(период {CURRENT_TIMEFRAME}):\n<b>{q_val}</b> (value: {val})")
@@ -162,9 +154,105 @@ def webhook():
             requests.post(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery', data={'callback_query_id': cq['id'], 'text': answer})
             send_telegram(answer)
         return {"ok": True}
+
     text = data.get('message', {}).get('text', '')
     log(f"DEBUG: message text {text}")
-    # ... здесь остальной код меню и команд без изменений ...
+
+    # --- Команды меню ---
+    if text == '/start':
+        kb = [
+            [{'text':'📊 Статус бота'},{'text':'🕵️ Последние 10'}],
+            [{'text':'📥 Excel'},{'text':'⚙️ Порог'}],
+            [{'text':'🎚 Фильтр'},{'text':'🔢 Фильтр value'}],
+            [{'text':'🌍 Страна'},{'text':'📆 Период'}],
+            [{'text':'⏱ Интервал'}],
+            [{'text':'➕ Добавить слова'},{'text':'🔍 Показать слова'}],
+            [{'text':'🗑 Удалить слова'},{'text':'🔄 Сброс слов'}],
+            [{'text':'🔍 Тест трендов'}]
+        ]
+        send_telegram('👋 Выбери действие:', reply_markup={'keyboard': kb, 'resize_keyboard': True})
+    elif text == '🔍 Тест трендов':
+        check_trends()
+        send_telegram('🔍 Тест трендов выполнен — глянь логи.')
+    elif text == '📊 Статус бота':
+        vs = 'ON' if VAL_FILTER_ENABLED else 'OFF'
+        period = {'now 1-d':'1д','now 7-d':'7д','now 30-d':'30д'}[CURRENT_TIMEFRAME]
+        interval_min = CHECK_INTERVAL // 60
+        send_telegram(
+            f"📡 ✅ Подключен\n"
+            f"🌍 {CURRENT_GEO}\n"
+            f"⏱ {period}\n"
+            f"⏲ {interval_min} мин\n"
+            f"💹 ≥{MIN_TREND_VALUE}\n"
+            f"🎚 {('ВКЛ' if FILTER_MODE else 'ВЫКЛ')}\n"
+            f"🔤 {', '.join(KEYWORDS)}"
+        )
+    elif text == '🕵️ Последние 10':
+        if recent_trends:
+            t = "\n".join([f"{i['time']} – {i['query']} ({i['value']})" for i in recent_trends[-10:]])
+            send_telegram(f"🧾 Последние 10:\n{t}")
+        else:
+            send_telegram('Нет данных.')
+    elif text == '📥 Excel':
+        path = export_to_xlsx()
+        if path:
+            with open(path, 'rb') as f:
+                requests.post(
+                    f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument',
+                    files={'document': f},
+                    data={'chat_id': TELEGRAM_CHAT_ID}
+                )
+        else:
+            send_telegram('Нет данных для экспорта.')
+    elif text == '⚙️ Порог':
+        inline = [[{'text': str(v), 'callback_data': f'set_value_{v}'} for v in range(0, 101, 10)]]
+        send_telegram('🔧 Выбери порог value:', reply_markup={'inline_keyboard': inline})
+    elif text == '🎚 Фильтр':
+        FILTER_MODE = not FILTER_MODE
+        send_telegram(f"🎚 Фильтр брендов {('включён' if FILTER_MODE else 'выключен')}")
+    elif text == '🔢 Фильтр value':
+        VAL_FILTER_ENABLED = not VAL_FILTER_ENABLED
+        send_telegram(f"🔢 Фильтр value {('ON' if VAL_FILTER_ENABLED else 'OFF')}")
+    elif text == '🌍 Страна':
+        inline = [[{'text':'🇮🇳 IN','callback_data':'geo_IN'}, {'text':'🇪🇬 EG','callback_data':'geo_EG'}, {'text':'🇺🇸 US','callback_data':'geo_US'}]]
+        send_telegram('🌍 Выберите страну:', reply_markup={'inline_keyboard': inline})
+    elif text == '📆 Период':
+        inline = [[{'text':'1 день','callback_data':'tf_1d'}, {'text':'7 дней','callback_data':'tf_7d'}, {'text':'30 дней','callback_data':'tf_30d'}]]
+        send_telegram('⏱ Выберите период:', reply_markup={'inline_keyboard': inline})
+    elif text == '⏱ Интервал':
+        inline = [[{'text':'1 мин','callback_data':'int_60'}, {'text':'5 мин','callback_data':'int_300'}, {'text':'15 мин','callback_data':'int_900'}]]
+        send_telegram('⏱ Выберите интервал:', reply_markup={'inline_keyboard': inline})
+    elif text == '➕ Добавить слова':
+        ACTION_STATE = 'add'
+        send_telegram('✍️ Введи слова через запятую:')
+    elif text == '🔍 Показать слова':
+        send_telegram(f"🔤 Текущие слова: {', '.join(KEYWORDS)}")
+    elif text == '🗑 Удалить слова':
+        ACTION_STATE = 'delete'
+        send_telegram('✂️ Введи слова для удаления:')
+    elif text == '🔄 Сброс слов':
+        KEYWORDS = DEFAULT_KEYWORDS.copy()
+        with open('keywords_base.txt', 'w', encoding='utf-8') as f:
+            f.write(','.join(KEYWORDS))
+        send_telegram(f"🔁 Сброс слов: {', '.join(KEYWORDS)}")
+    elif ACTION_STATE == 'add' and text:
+        new = [w.strip().lower() for w in text.split(',') if w.strip()]
+        for w in new:
+            if w not in KEYWORDS:
+                KEYWORDS.append(w)
+        with open('keywords_base.txt', 'w', encoding='utf-8') as f:
+            f.write(','.join(KEYWORDS))
+        send_telegram(f"✅ Добавлено: {', '.join(new)}")
+        ACTION_STATE = None
+    elif ACTION_STATE == 'delete' and text:
+        rem = [w.strip().lower() for w in text.split(',') if w.strip()]
+        KEYWORDS = [w for w in KEYWORDS if w not in rem]
+        with open('keywords_base.txt', 'w', encoding='utf-8') as f:
+            f.write(','.join(KEYWORDS))
+        send_telegram(f"🗑 Удалено: {', '.join(rem)}")
+        ACTION_STATE = None
+
+    return {"ok": True}
 
 if __name__ == '__main__':
     webhook_url = f'https://telegram-trends-bot.onrender.com/{TELEGRAM_TOKEN}'
