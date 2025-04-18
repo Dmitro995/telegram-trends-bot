@@ -11,7 +11,6 @@ from flask import Flask, request
 
 # === Настройки ===
 CURRENT_GEO = 'IN'
-# Параметр timeframe для Google Trends: 'now 1-d', 'now 7-d', 'now 30-d'
 CURRENT_TIMEFRAME = 'now 1-d'
 DEFAULT_KEYWORDS = ['casino', 'bet', 'play', 'win', 'game']
 
@@ -22,17 +21,14 @@ try:
 except FileNotFoundError:
     KEYWORDS = DEFAULT_KEYWORDS.copy()
 
-# Состояние ввода добавления/удаления слов
 ACTION_STATE = None
-# Флаг фильтрации по value
 VAL_FILTER_ENABLED = True
-# Интервал проверки трендов (сек)
+# Интервал проверки трендов (секунды)
 CHECK_INTERVAL = 900  # по умолчанию 15 минут
 
 TELEGRAM_TOKEN = '7543116655:AAHxgebuCQxGzY91o-sTxV2PSZjEe2nBWF8'
 TELEGRAM_CHAT_ID = 784190963
 MIN_TREND_VALUE = 30
-# Флаг фильтрации по вероятности бренда
 FILTER_MODE = True
 
 app = Flask(__name__)
@@ -107,11 +103,11 @@ def check_trends():
         pytrends.build_payload(['online casino'], geo=CURRENT_GEO, timeframe=CURRENT_TIMEFRAME)
         related = pytrends.related_queries()
         log(f"DEBUG: related_queries() вернуло: {type(related)} with keys: {list(related.keys())}")
-        # Логируем сырые связанные запросы как JSON
         try:
             log(f"DEBUG: Raw related content: {json.dumps(related, default=str, ensure_ascii=False)}")
         except Exception as ex:
-            log(f"DEBUG: Не удалось сериализовать related: {ex}, type: {type(related)}").get('rising')
+            log(f"DEBUG: Не удалось сериализовать related: {ex}, type: {type(related)}")
+        rising = related.get('online casino', {}).get('rising')
         if rising is None:
             log("DEBUG: rising == None")
         elif hasattr(rising, 'empty') and rising.empty:
@@ -119,6 +115,8 @@ def check_trends():
         else:
             rows = len(rising)
             log(f"DEBUG: rising содержит {rows} строк")
+            log(f"DEBUG: rising columns: {list(rising.columns)}")
+            log(f"DEBUG: rising sample: {rising.head().to_dict()}")
             for _, row in rising.iterrows():
                 query, val = row['query'], row['value']
                 if (not VAL_FILTER_ENABLED or val >= MIN_TREND_VALUE) and query not in checked_queries:
@@ -148,10 +146,7 @@ def trends_loop():
 def webhook():
     global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE, KEYWORDS, CHECK_INTERVAL
     data = request.get_json(force=True)
-    log("DEBUG: Вебхук получил данные")
     log(f"⚙️ Incoming update: {json.dumps(data, ensure_ascii=False)}")
-
-    # --- Inline‑кнопки ---
     cq = data.get('callback_query')
     log(f"DEBUG: callback_query: {cq}")
     if cq:
@@ -185,8 +180,6 @@ def webhook():
             )
             send_telegram(answer)
         return {"ok": True}
-
-    # --- Reply‑кнопки и текстовые команды ---
     text = data.get('message', {}).get('text', '')
     log(f"DEBUG: message text: {text}")
     if text == '/start':
@@ -197,13 +190,17 @@ def webhook():
             [{'text': '🌍 Страна'}, {'text': '📆 Период'}],
             [{'text': '⏱ Интервал'}],
             [{'text': '➕ Добавить слова'}, {'text': '🔍 Показать слова'}],
-            [{'text': '🗑 Удалить слова'}, {'text': '🔄 Сброс слов'}]
+            [{'text': '🗑 Удалить слова'}, {'text': '🔄 Сброс слов'}],
+            [{'text': '🔍 Тест трендов'}]
         ]
         send_telegram("👋 Выбери действие:", reply_markup={'keyboard': kb, 'resize_keyboard': True})
+    elif text == '🔍 Тест трендов':
+        check_trends()
+        send_telegram("🔍 Тест трендов выполнен — глянь логи.")
     elif text == '📊 Статус бота':
         status = "✅ Подключен"
         val_state = 'ON' if VAL_FILTER_ENABLED else 'OFF'
-        period = {'now 1-d': '1 день', 'now 7-d': '7 дней', 'now 30-d': '30 дней'}.get(CURRENT_TIMEFRAME,CURRENT_TIMEFRAME)
+        period = {'now 1-d': '1 день', 'now 7-d': '7 дней', 'now 30-d': '30 дней'}.get(CURRENT_TIMEFRAME, CURRENT_TIMEFRAME)
         interval_min = CHECK_INTERVAL // 60
         send_telegram(
             f"📡 {status}\n"
@@ -232,7 +229,7 @@ def webhook():
         else:
             send_telegram("Нет данных для экспорта.")
     elif text == '⚙️ Порог':
-        inline = [[{'text': str(v), 'callback_data': f'set_value_{v}'} for v in range(0,101,10)]]
+        inline = [[{'text': str(v), 'callback_data': f'set_value_{v}'} for v in range(0, 101, 10)]]
         send_telegram("🔧 Выбери порог value:", reply_markup={'inline_keyboard': inline})
     elif text == '🎚 Фильтр':
         FILTER_MODE = not FILTER_MODE
@@ -263,30 +260,4 @@ def webhook():
             f.write(','.join(KEYWORDS))
         send_telegram(f"🔁 Сброс слов: {', '.join(KEYWORDS)}")
     elif ACTION_STATE == 'add' and text:
-        new = [k.strip().lower() for k in text.split(',') if k.strip()]
-        for w in new:
-            if w not in KEYWORDS:
-                KEYWORDS.append(w)
-        with open('keywords_base.txt','w',encoding='utf-8') as f:
-            f.write(','.join(KEYWORDS))
-        send_telegram(f"✅ Добавлено: {', '.join(new)}")
-        ACTION_STATE = None
-    elif ACTION_STATE == 'delete' and text:
-        rem = [k.strip().lower() for k in text.split(',') if k.strip()]
-        KEYWORDS = [w for w in KEYWORDS if w not in rem]
-        with open('keywords_base.txt','w',encoding='utf-8') as f:
-            f.write(','.join(KEYWORDS))
-        send_telegram(f"🗑 Удалено: {', '.join(rem)}")
-        ACTION_STATE = None
-    return {"ok": True}
-
-if __name__ == '__main__':
-    manual_webhook_url = f'https://telegram-trends-bot.onrender.com/{TELEGRAM_TOKEN}'
-    try:
-        requests.get(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={manual_webhook_url}')
-        log(f"Webhook установлен на {manual_webhook_url}")
-    except Exception as e:
-        log(f"Ошибка при установке webhook: {e}")
-    threading.Thread(target=trends_loop, daemon=True).start()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+        new = [k.strip().lower() for k
