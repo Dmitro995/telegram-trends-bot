@@ -106,7 +106,12 @@ def check_trends():
     try:
         pytrends.build_payload(['online casino'], geo=CURRENT_GEO, timeframe=CURRENT_TIMEFRAME)
         related = pytrends.related_queries()
-        log(f"DEBUG: related_queries() вернуло: {type(related)}")
+        log(f"DEBUG: related_queries() вернуло: {type(related)} with keys: {list(related.keys())}")
+        # Логируем сырые связанные запросы как JSON
+        try:
+            log(f"DEBUG: Raw related content: {json.dumps(related, default=str, ensure_ascii=False)}")
+        except Exception as e:
+            log(f"DEBUG: Не удалось сериализовать related: {e}") {type(related)}")
         rising = related.get('online casino', {}).get('rising')
         if rising is None:
             log("DEBUG: rising == None")
@@ -144,10 +149,12 @@ def trends_loop():
 def webhook():
     global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE, KEYWORDS, CHECK_INTERVAL
     data = request.get_json(force=True)
+    log("DEBUG: Вебхук получил данные")
     log(f"⚙️ Incoming update: {json.dumps(data, ensure_ascii=False)}")
 
     # --- Inline‑кнопки ---
     cq = data.get('callback_query')
+    log(f"DEBUG: callback_query: {cq}")
     if cq:
         cmd = cq.get('data', '')
         answer = None
@@ -182,6 +189,7 @@ def webhook():
 
     # --- Reply‑кнопки и текстовые команды ---
     text = data.get('message', {}).get('text', '')
+    log(f"DEBUG: message text: {text}")
     if text == '/start':
         kb = [
             [{'text': '📊 Статус бота'}, {'text': '🕵️ Последние 10'}],
