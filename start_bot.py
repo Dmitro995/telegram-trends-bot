@@ -127,8 +127,7 @@ def check_trends():
 # === Webhook и обработка сообщений ===
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
-    global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED,
-    global CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE
+    global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE
     data = request.json
     log(f"Incoming: {json.dumps(data, ensure_ascii=False)}")
     # Inline-кнопки
