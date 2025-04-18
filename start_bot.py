@@ -147,8 +147,8 @@ def webhook():
     global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE, KEYWORDS, CHECK_INTERVAL
     data = request.get_json(force=True)
     log(f"⚙️ Incoming update: {json.dumps(data, ensure_ascii=False)}")
+    log(f"DEBUG: callback_query: {data.get('callback_query')}")
     cq = data.get('callback_query')
-    log(f"DEBUG: callback_query: {cq}")
     if cq:
         cmd = cq.get('data', '')
         answer = None
@@ -200,13 +200,13 @@ def webhook():
     elif text == '📊 Статус бота':
         status = "✅ Подключен"
         val_state = 'ON' if VAL_FILTER_ENABLED else 'OFF'
-        period = {'now 1-d': '1 день', 'now 7-d': '7 дней', 'now 30-d': '30 дней'}.get(CURRENT_TIMEFRAME, CURRENT_TIMEFRAME)
+        period = {'now 1-d': '1 день', 'now 7-d': '7 дней', 'now 30-d': '30 дней'}.get(CURRENT_TIMEFRAME,CURRENT_TIMEFRAME)
         interval_min = CHECK_INTERVAL // 60
         send_telegram(
             f"📡 {status}\n"
             f"🌍 Страна: {CURRENT_GEO}\n"
             f"⏱ Период: {period}\n"
-            f"⏲ Интервал: {interval_min} мин\n"
+            f"⏲ Интервал: {interval_min} min\n"
             f"💹 Порог value: ≥ {MIN_TREND_VALUE} (filter {'ON' if VAL_FILTER_ENABLED else 'OFF'})\n"
             f"🎚 Фильтр брендов: {'ВКЛ' if FILTER_MODE else 'ВЫКЛ'}\n"
             f"🔤 Слова: {', '.join(KEYWORDS)}"
@@ -217,47 +217,4 @@ def webhook():
             send_telegram(f"🧾 Последние 10:\n{txt}")
         else:
             send_telegram("Нет данных.")
-    elif text == '📥 Excel':
-        path = export_to_xlsx()
-        if path:
-            with open(path, 'rb') as f:
-                requests.post(
-                    f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument',
-                    files={'document': f},
-                    data={'chat_id': TELEGRAM_CHAT_ID}
-                )
-        else:
-            send_telegram("Нет данных для экспорта.")
-    elif text == '⚙️ Порог':
-        inline = [[{'text': str(v), 'callback_data': f'set_value_{v}'} for v in range(0, 101, 10)]]
-        send_telegram("🔧 Выбери порог value:", reply_markup={'inline_keyboard': inline})
-    elif text == '🎚 Фильтр':
-        FILTER_MODE = not FILTER_MODE
-        send_telegram(f"🎚 Фильтр брендов {'включён' if FILTER_MODE else 'выключен'}")
-    elif text == '🔢 Фильтр value':
-        VAL_FILTER_ENABLED = not VAL_FILTER_ENABLED
-        send_telegram(f"🔢 Фильтр value: {'ON' if VAL_FILTER_ENABLED else 'OFF'}")
-    elif text == '🌍 Страна':
-        inline = [[{'text':'🇮🇳 IN','callback_data':'geo_IN'},{'text':'🇪🇬 EG','callback_data':'geo_EG'},{'text':'🇺🇸 US','callback_data':'geo_US'}]]
-        send_telegram("🌍 Выбери страну:", reply_markup={'inline_keyboard': inline})
-    elif text == '📆 Период':
-        inline = [[{'text':'1 день','callback_data':'tf_1d'},{'text':'7 дней','callback_data':'tf_7d'},{'text':'30 дней','callback_data':'tf_30d'}]]
-        send_telegram("⏱ Выберите период:", reply_markup={'inline_keyboard': inline})
-    elif text == '⏱ Интервал':
-        inline = [[{'text':'1 мин','callback_data':'int_60'},{'text':'5 мин','callback_data':'int_300'},{'text':'15 мин','callback_data':'int_900'}]]
-        send_telegram("⏱ Выберите интервал:", reply_markup={'inline_keyboard': inline})
-    elif text == '➕ Добавить слова':
-        ACTION_STATE = 'add'
-        send_telegram("✍️ Введи слова через запятую:")
-    elif text == '🔍 Показать слова':
-        send_telegram(f"🔤 Текущие слова: {', '.join(KEYWORDS)}")
-    elif text == '🗑 Удалить слова':
-        ACTION_STATE = 'delete'
-        send_telegram("✂️ Введи слова для удаления:")
-    elif text == '🔄 Сброс слов':
-        KEYWORDS = DEFAULT_KEYWORDS.copy()
-        with open('keywords_base.txt','w',encoding='utf-8') as f:
-            f.write(','.join(KEYWORDS))
-        send_telegram(f"🔁 Сброс слов: {', '.join(KEYWORDS)}")
-    elif ACTION_STATE == 'add' and text:
-        new = [k.strip().lower() for k
+    elif text
