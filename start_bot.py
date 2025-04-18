@@ -26,15 +26,14 @@ except FileNotFoundError:
 ACTION_STATE = None
 # Флаг фильтрации по value
 VAL_FILTER_ENABLED = True
+# Интервал проверки трендов (сек)
+CHECK_INTERVAL = 900  # по умолчанию 15 минут
 
 TELEGRAM_TOKEN = '7543116655:AAHxgebuCQxGzY91o-sTxV2PSZjEe2nBWF8'
 TELEGRAM_CHAT_ID = 784190963
 MIN_TREND_VALUE = 30
 # Флаг фильтрации по вероятности бренда
 FILTER_MODE = True
-
-# Интервал проверки трендов (сек)
-SLEEP_TIME = 900  # 15 минут
 
 app = Flask(__name__)
 pytrends = TrendReq(hl='en-US', tz=330)
@@ -107,14 +106,14 @@ def check_trends():
     try:
         pytrends.build_payload(['online casino'], geo=CURRENT_GEO, timeframe=CURRENT_TIMEFRAME)
         related = pytrends.related_queries()
-        log(f"DEBUG: related_queries() вернуло: {related}")
+        log(f"DEBUG: related_queries() вернуло: {type(related)}")
         rising = related.get('online casino', {}).get('rising')
         if rising is None:
             log("DEBUG: rising == None")
         elif hasattr(rising, 'empty') and rising.empty:
             log("DEBUG: rising пустой DataFrame")
         else:
-            rows = len(rising) if hasattr(rising, '__len__') else 'unknown'
+            rows = len(rising)
             log(f"DEBUG: rising содержит {rows} строк")
             for _, row in rising.iterrows():
                 query, val = row['query'], row['value']
@@ -138,12 +137,12 @@ def trends_loop():
             check_trends()
         except Exception as e:
             log(f"⚠️ Ошибка в фоне: {e}")
-        time.sleep(SLEEP_TIME)
+        time.sleep(CHECK_INTERVAL)
 
 # === Webhook и обработка обновлений ===
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
-    global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE, KEYWORDS
+    global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE, KEYWORDS, CHECK_INTERVAL
     data = request.get_json(force=True)
     log(f"⚙️ Incoming update: {json.dumps(data, ensure_ascii=False)}")
 
@@ -167,6 +166,12 @@ def webhook():
             if tf in mapping:
                 CURRENT_TIMEFRAME = mapping[tf]
                 answer = f"⏱ Период: {labels[tf]}"
+        elif cmd.startswith('int_'):
+            sec = int(cmd.split('_')[-1])
+            if sec > 0:
+                CHECK_INTERVAL = sec
+                minutes = sec // 60
+                answer = f"⏲ Интервал обновлён: {minutes} мин"
         if answer:
             requests.post(
                 f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery',
@@ -183,6 +188,7 @@ def webhook():
             [{'text': '📥 Excel'}, {'text': '⚙️ Порог'}],
             [{'text': '🎚 Фильтр'}, {'text': '🔢 Фильтр value'}],
             [{'text': '🌍 Страна'}, {'text': '📆 Период'}],
+            [{'text': '⏱ Интервал'}],
             [{'text': '➕ Добавить слова'}, {'text': '🔍 Показать слова'}],
             [{'text': '🗑 Удалить слова'}, {'text': '🔄 Сброс слов'}]
         ]
@@ -190,12 +196,14 @@ def webhook():
     elif text == '📊 Статус бота':
         status = "✅ Подключен"
         val_state = 'ON' if VAL_FILTER_ENABLED else 'OFF'
-        period = {'now 1-d': '1 день', 'now 7-d': '7 дней', 'now 30-d': '30 дней'}.get(CURRENT_TIMEFRAME, CURRENT_TIMEFRAME)
+        period = {'now 1-d': '1 день', 'now 7-d': '7 дней', 'now 30-d': '30 дней'}.get(CURRENT_TIMEFRAME,CURRENT_TIMEFRAME)
+        interval_min = CHECK_INTERVAL // 60
         send_telegram(
             f"📡 {status}\n"
             f"🌍 Страна: {CURRENT_GEO}\n"
             f"⏱ Период: {period}\n"
-            f"💹 Порог value: ≥ {MIN_TREND_VALUE} (filter {val_state})\n"
+            f"⏲ Интервал: {interval_min} мин\n"
+            f"💹 Порог value: ≥ {MIN_TREND_VALUE} (filter {'ON' if VAL_FILTER_ENABLED else 'OFF'})\n"
             f"🎚 Фильтр брендов: {'ВКЛ' if FILTER_MODE else 'ВЫКЛ'}\n"
             f"🔤 Слова: {', '.join(KEYWORDS)}"
         )
@@ -217,7 +225,7 @@ def webhook():
         else:
             send_telegram("Нет данных для экспорта.")
     elif text == '⚙️ Порог':
-        inline = [[{ 'text': str(v), 'callback_data': f'set_value_{v}' } for v in range(0, 101, 10)]]
+        inline = [[{'text': str(v), 'callback_data': f'set_value_{v}'} for v in range(0,101,10)]]
         send_telegram("🔧 Выбери порог value:", reply_markup={'inline_keyboard': inline})
     elif text == '🎚 Фильтр':
         FILTER_MODE = not FILTER_MODE
@@ -226,11 +234,14 @@ def webhook():
         VAL_FILTER_ENABLED = not VAL_FILTER_ENABLED
         send_telegram(f"🔢 Фильтр value: {'ON' if VAL_FILTER_ENABLED else 'OFF'}")
     elif text == '🌍 Страна':
-        inline = [[{'text': '🇮🇳 IN', 'callback_data': 'geo_IN'},{'text': '🇪🇬 EG', 'callback_data': 'geo_EG'},{'text': '🇺🇸 US','callback_data':'geo_US'}]]
+        inline = [[{'text':'🇮🇳 IN','callback_data':'geo_IN'},{'text':'🇪🇬 EG','callback_data':'geo_EG'},{'text':'🇺🇸 US','callback_data':'geo_US'}]]
         send_telegram("🌍 Выбери страну:", reply_markup={'inline_keyboard': inline})
     elif text == '📆 Период':
-        inline = [[{'text': '1 день','callback_data':'tf_1d'},{'text':'7 дней','callback_data':'tf_7d'},{'text':'30 дней','callback_data':'tf_30d'}]]
+        inline = [[{'text':'1 день','callback_data':'tf_1d'},{'text':'7 дней','callback_data':'tf_7d'},{'text':'30 дней','callback_data':'tf_30d'}]]
         send_telegram("⏱ Выберите период:", reply_markup={'inline_keyboard': inline})
+    elif text == '⏱ Интервал':
+        inline = [[{'text':'1 мин','callback_data':'int_60'},{'text':'5 мин','callback_data':'int_300'},{'text':'15 мин','callback_data':'int_900'}]]
+        send_telegram("⏱ Выберите интервал:", reply_markup={'inline_keyboard': inline})
     elif text == '➕ Добавить слова':
         ACTION_STATE = 'add'
         send_telegram("✍️ Введи слова через запятую:")
