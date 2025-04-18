@@ -134,7 +134,7 @@ def trends_loop():
 # === Webhook и обработка обновлений ===
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
-    global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE
+    global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, CURRENT_GEO, CURRENT_TIMEFRAME, ACTION_STATE, KEYWORDS
     data = request.get_json(force=True)
     log(f"⚙️ Incoming update: {json.dumps(data, ensure_ascii=False)}")
 
