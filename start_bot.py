@@ -45,15 +45,14 @@ def export_excel():
 # Brand filter
 def is_new_brand(q):
     q_lower = q.lower()
-    if any(kw in q_lower for kw in ['casino', 'bet', 'play', 'win']):
-        return True
-    return False
+    return any(kw in q_lower for kw in ['casino', 'bet', 'play', 'win'])
 
 # Fetch new casinos
 def fetch_new_casinos():
     tf = timeframes[CURRENT_TIMEFRAME_KEY]
     try:
-        pytrends.build_payload(['online casino'], timeframe=tf)
+        # add geo parameter to avoid 400 error
+        pytrends.build_payload(['online casino'], timeframe=tf, geo='')
         related = pytrends.related_queries().get('online casino', {}).get('rising')
     except Exception as e:
         send_telegram(f"⚠️ Ошибка при fetch_new_casinos: {e}")
