@@ -111,6 +111,11 @@ def check_trends():
         try:
             log(f"DEBUG: Raw related content: {json.dumps(related, default=str, ensure_ascii=False)}")
         except Exception as e:
+            log(f"DEBUG: Не удалось сериализовать related: {e}, type: {type(related)}")} with keys: {list(related.keys())}")
+        # Логируем сырые связанные запросы как JSON
+        try:
+            log(f"DEBUG: Raw related content: {json.dumps(related, default=str, ensure_ascii=False)}")
+        except Exception as e:
             log(f"DEBUG: Не удалось сериализовать related: {e}, type: {type(related)}")}")
         except Exception as e:
             log(f"DEBUG: Не удалось сериализовать related: {e}") {type(related)}")
