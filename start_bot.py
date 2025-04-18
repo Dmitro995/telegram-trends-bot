@@ -95,6 +95,15 @@ def export_to_xlsx():
     df.to_excel(filename, index=False)
     return filename
 
+# === Функция фонового цикла проверки трендов ===
+def trends_loop():
+    while True:
+        try:
+            check_trends()
+        except Exception as e:
+            log(f"⚠️ Ошибка в фоне: {e}")
+        time.sleep(SLEEP_TIME)
+
 # === Проверка трендов ===
 def check_trends():
     try:
@@ -108,7 +117,6 @@ def check_trends():
         if isinstance(rising, pd.DataFrame) and not rising.empty:
             for _, row in rising.iterrows():
                 query, val = row['query'], row['value']
-                # Условие с учётом флага фильтра по значению
                 if (not VAL_FILTER_ENABLED or val >= MIN_TREND_VALUE) and query not in checked_queries:
                     if not FILTER_MODE or is_probable_new_brand(query):
                         checked_queries.add(query)
@@ -125,6 +133,8 @@ def check_trends():
 def webhook():
     global MIN_TREND_VALUE, FILTER_MODE, VAL_FILTER_ENABLED, KEYWORDS, CURRENT_GEO, ACTION_STATE
     data = request.json
+    # Лог входящего
+    log(f"Incoming update: {json.dumps(data, ensure_ascii=False)}")
     # Обработка inline-кнопок
     if 'callback_query' in data:
         cd = data['callback_query']['data']
@@ -138,9 +148,10 @@ def webhook():
             CURRENT_GEO = cd.split("_")[-1]
             answer = f"🌍 Страна установлена: {CURRENT_GEO}"
         if answer:
-            requests.post(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery', data={
-                'callback_query_id': data['callback_query']['id'], 'text': answer
-            })
+            requests.post(
+                f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery',
+                data={ 'callback_query_id': data['callback_query']['id'], 'text': answer }
+            )
             send_telegram(answer)
         return {"ok": True}
 
@@ -148,21 +159,21 @@ def webhook():
     # Меню
     if msg == "/start":
         kb = [
-            [{'text':'📊 Статус бота'}, {'text':'🕵️ Последние 10'}],
-            [{'text':'📥 Excel'}, {'text':'⚙️ Порог'}],
-            [{'text':'🎚 Фильтр'}, {'text':'🔢 Фильтр value'}],
-            [{'text':'🌍 Страна'}, {'text':'➕ Добавить слова'}],
-            [{'text':'🔍 Показать слова'}, {'text':'🗑 Удалить слова'}],
-            [{'text':'🔄 Сброс слов'}]
+            [{ 'text':'📊 Статус бота' }, { 'text':'🕵️ Последние 10' }],
+            [{ 'text':'📥 Excel' }, { 'text':'⚙️ Порог' }],
+            [{ 'text':'🎚 Фильтр' }, { 'text':'🔢 Фильтр value' }],
+            [{ 'text':'🌍 Страна' }, { 'text':'➕ Добавить слова' }],
+            [{ 'text':'🔍 Показать слова' }, { 'text':'🗑 Удалить слова' }],
+            [{ 'text':'🔄 Сброс слов' }]
         ]
-        send_telegram("👋 Выбери действие:", reply_markup={'keyboard': kb, 'resize_keyboard': True})
+        send_telegram("👋 Выбери действие:", reply_markup={ 'keyboard': kb, 'resize_keyboard': True })
     elif msg == '📊 Статус бота':
         status = "✅ Подключен"
-        val_filter_state = 'ON' if VAL_FILTER_ENABLED else 'OFF'
+        val_state = 'ON' if VAL_FILTER_ENABLED else 'OFF'
         send_telegram(
-            f"📡 Статус: {status}\n"
+            f"📡 {status}\n"
             f"🌍 Страна: {CURRENT_GEO}\n"
-            f"value ≥ {MIN_TREND_VALUE} (filter {'ON' if VAL_FILTER_ENABLED else 'OFF'})\n"
+            f"💹 Порог value: ≥ {MIN_TREND_VALUE} (filter {val_state})\n"
             f"🔤 Слова: {', '.join(KEYWORDS)}\n"
             f"🎚 Фильтр брендов: {'ВКЛ' if FILTER_MODE else 'ВЫКЛ'}"
         )
@@ -178,14 +189,14 @@ def webhook():
             with open(path, 'rb') as f:
                 requests.post(
                     f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument',
-                    files={'document': f},
-                    data={'chat_id': TELEGRAM_CHAT_ID}
+                    files={ 'document': f },
+                    data={ 'chat_id': TELEGRAM_CHAT_ID }
                 )
         else:
             send_telegram("Нет данных для экспорта.")
     elif msg == '⚙️ Порог':
-        inline = [[{'text': str(v), 'callback_data': f'set_value_{v}'} for v in range(0, 101, 10)]]
-        send_telegram("🔧 Выбери порог value:", reply_markup={'inline_keyboard': inline})
+        inline = [[{ 'text': str(v), 'callback_data': f'set_value_{v}' } for v in range(0, 101, 10)]]
+        send_telegram("🔧 Выбери порог value:", reply_markup={ 'inline_keyboard': inline })
     elif msg == '🎚 Фильтр':
         FILTER_MODE = not FILTER_MODE
         send_telegram(f"🎚 Фильтр брендов {'включён' if FILTER_MODE else 'выключен'}")
@@ -194,11 +205,11 @@ def webhook():
         send_telegram(f"🔢 Фильтр по value теперь: {'ON' if VAL_FILTER_ENABLED else 'OFF'}")
     elif msg == '🌍 Страна':
         inline = [[
-            {'text':'🇮🇳 IN', 'callback_data':'geo_IN'},
-            {'text':'🇪🇬 EG', 'callback_data':'geo_EG'},
-            {'text':'🇺🇸 US', 'callback_data':'geo_US'}
+            { 'text':'🇮🇳 IN', 'callback_data':'geo_IN' },
+            { 'text':'🇪🇬 EG', 'callback_data':'geo_EG' },
+            { 'text':'🇺🇸 US', 'callback_data':'geo_US' }
         ]]
-        send_telegram("🌍 Выбери страну:", reply_markup={'inline_keyboard': inline})
+        send_telegram("🌍 Выбери страну:", reply_markup={ 'inline_keyboard': inline })
     elif msg == '➕ Добавить слова':
         ACTION_STATE = 'add'
         send_telegram("✍️ Введи слова через запятую:")
@@ -209,7 +220,7 @@ def webhook():
         send_telegram("✂️ Введи слова для удаления:")
     elif msg == '🔄 Сброс слов':
         KEYWORDS = DEFAULT_KEYWORDS.copy()
-        with open('keywords_base.txt','w', encoding='utf-8') as f:
+        with open('keywords_base.txt', 'w', encoding='utf-8') as f:
             f.write(','.join(KEYWORDS))
         send_telegram(f"🔁 Сброс слов: {', '.join(KEYWORDS)}")
     elif ACTION_STATE == 'add' and msg:
@@ -217,26 +228,29 @@ def webhook():
         for w in new:
             if w not in KEYWORDS:
                 KEYWORDS.append(w)
-        with open('keywords_base.txt','w', encoding='utf-8') as f:
+        with open('keywords_base.txt', 'w', encoding='utf-8') as f:
             f.write(','.join(KEYWORDS))
         send_telegram(f"✅ Добавлено: {', '.join(new)}")
         ACTION_STATE = None
     elif ACTION_STATE == 'delete' and msg:
         rem = [k.strip().lower() for k in msg.split(',') if k.strip()]
         KEYWORDS = [w for w in KEYWORDS if w not in rem]
-        with open('keywords_base.txt','w', encoding='utf-8') as f:
+        with open('keywords_base.txt', 'w', encoding='utf-8') as f:
             f.write(','.join(KEYWORDS))
         send_telegram(f"🗑 Удалено: {', '.join(rem)}")
         ACTION_STATE = None
-    return {"ok": True}
+    return { 'ok': True }
 
-# Запуск фонового цикла и сервера
+# === Запуск фонового цикла и сервера ===
 if __name__ == '__main__':
     manual_webhook_url = f'https://telegram-trends-bot.onrender.com/{TELEGRAM_TOKEN}'
     try:
         requests.get(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={manual_webhook_url}')
+        log(f"Webhook установлен на {manual_webhook_url}")
     except Exception as e:
         log(f"Ошибка при установке webhook: {e}")
+    # Запуск фонового цикла проверки трендов
     threading.Thread(target=trends_loop, daemon=True).start()
+    # Запуск Flask-приложения
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
