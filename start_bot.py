@@ -1,137 +1,133 @@
 import os
 import time
 import json
-import requests
 import threading
-import re
+import requests
 import pandas as pd
-from datetime import datetime
-from pytrends.request import TrendReq
 from flask import Flask, request
+from pytrends.request import TrendReq
+from datetime import datetime
 
-# === Настройки ===
-CURRENT_GEO = 'IN'                # Код страны для trending_searches
-CURRENT_TIMEFRAME = 'now 1-d'     # Не используется в trending_searches
-DEFAULT_KEYWORDS = ['casino', 'bet', 'play', 'win', 'game']
-
-# Состояние
-ACTION_STATE = None
-CHECK_INTERVAL = 900              # Интервал проверки трендов (сек)
-
-TELEGRAM_TOKEN = '7543116655:AAHxgebuCQxGzY91o-sTxV2PSZjEe2nBWF8'
-TELEGRAM_CHAT_ID = 784190963
-
-# Инициализация
+# === Config ===
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN') or 'YOUR_TELEGRAM_TOKEN'
+TELEGRAM_CHAT_ID = int(os.getenv('TELEGRAM_CHAT_ID') or 0)
 app = Flask(__name__)
-pytrends = TrendReq(hl='en-US', tz=330)
+
+# State
+KEYWORDS = []
+CURRENT_TIMEFRAME = 'now 1-d'  # 'now 1-d', 'now 7-d', 'now 30-d'
+ENABLED = True
+CHECK_INTERVAL = 900  # seconds
 checked_queries = set()
 recent_trends = []
+pytrends = TrendReq(hl='en-US', tz=0)
 
-# === Health check ===
-@app.route('/', methods=['GET'])
-def index():
-    return 'Bot is running', 200
-
-# === Логирование ===
-def log(msg: str, file: str = "log.txt"):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {msg}")
-    with open(file, 'a', encoding='utf-8') as f:
-        f.write(f"[{timestamp}] {msg}\n")
-
-# === Отправка сообщений ===
-def send_telegram(msg: str, reply_markup: dict = None):
-    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': msg, 'parse_mode': 'HTML'}
+# Helpers
+def send_telegram(text, reply_markup=None):
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': text,
+        'parse_mode': 'HTML'
+    }
     if reply_markup:
         payload['reply_markup'] = json.dumps(reply_markup)
-    try:
-        requests.post(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage', data=payload)
-    except Exception as e:
-        log(f"Ошибка Telegram: {e}")
+    requests.post(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage', data=payload)
 
-# === Экспорт в Excel ===
+# Export to Excel
 def export_to_xlsx() -> str:
     if not recent_trends:
         return None
     df = pd.DataFrame(recent_trends)
-    filename = "trends_export.xlsx"
+    filename = 'trends_export.xlsx'
     df.to_excel(filename, index=False)
     return filename
 
-# === Проверка трендов с помощью trending_searches ===
+# Trend check
 def check_trends():
-    log(f"DEBUG: Запускаю check_trends() using trending_searches for geo={CURRENT_GEO}")
-    # Шаг 1: получить топ-20 трендов за последние 24ч
-    try:
-        df = pytrends.trending_searches(pn=CURRENT_GEO)
-    except Exception as e:
-        log(f"⚠️ Ошибка trending_searches: {e}")
+    if not ENABLED or not KEYWORDS:
         return
-    # Шаг 2: обработать каждый тренд
-    for q in df[0].tolist():
-        if q in checked_queries:
-            continue
-        checked_queries.add(q)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        info = {"query": q, "time": timestamp}
-        recent_trends.append(info)
-        msg = f"🔥 Тренд сейчас в {CURRENT_GEO} (24ч):\n<b>{q}</b>"
-        send_telegram(msg)
-        log(f"Sent trending: {q}", "log_new_trends.txt")
+    for kw in KEYWORDS:
+        try:
+            pytrends.build_payload([kw], timeframe=CURRENT_TIMEFRAME)
+            related = pytrends.related_queries().get(kw, {}).get('rising')
+            if related is None or related.empty:
+                continue
+            top = related.head(5)
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            msg = f"<b>Тренды по '{kw}' ({CURRENT_TIMEFRAME}):</b>"
+            for _, row in top.iterrows():
+                msg += f"\n– {row['query']} ({row['value']})"
+                recent_trends.append({
+                    'keyword': kw,
+                    'query': row['query'],
+                    'value': row['value'],
+                    'time': timestamp
+                })
+            send_telegram(msg)
+        except Exception as e:
+            send_telegram(f"Ошибка при запросе трендов '{kw}': {e}")
 
-# === Фоновой цикл ===
+# Background loop
 def trends_loop():
     while True:
         check_trends()
         time.sleep(CHECK_INTERVAL)
 
-# === Webhook и обработка обновлений ===
+# Webhook
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
-    data = request.get_json(force=True)
-    log(f"⚙️ Incoming update {json.dumps(data, ensure_ascii=False)}")
-    # inline callbacks
-    cq = data.get('callback_query')
-    if cq:
-        cmd = cq.get('data', '')
+    global CURRENT_TIMEFRAME, ENABLED
+    data = request.json
+    # Inline callback
+    if 'callback_query' in data:
+        cmd = data['callback_query']['data']
         answer = None
-        if cmd == 'run_trends':
-            check_trends()
-            answer = "🔍 Тренды обновлены"
+        if cmd.startswith('tf_'):
+            tf_map = {'1d': 'now 1-d', '7d': 'now 7-d', '30d': 'now 30-d'}
+            key = cmd.split('_')[1]
+            CURRENT_TIMEFRAME = tf_map.get(key, CURRENT_TIMEFRAME)
+            answer = f"⏱ Период установлен: {key}"
+        elif cmd == 'enable':
+            ENABLED = True
+            answer = "🤖 Бот включен"
+        elif cmd == 'disable':
+            ENABLED = False
+            answer = "🤖 Бот отключён"
         if answer:
             requests.post(
                 f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery',
-                data={'callback_query_id': cq['id'], 'text': answer}
+                data={'callback_query_id': data['callback_query']['id'], 'text': answer}
             )
             send_telegram(answer)
-        return {"ok": True}
-    text = data.get('message', {}).get('text', '')
-    log(f"DEBUG: message text {text}")
+        return {'ok': True}
 
-    # --- Меню команд ---
+    text = data.get('message', {}).get('text', '')
+    # Menu
     if text == '/start':
         kb = [
-            [{'text':'📊 Статус бота'},{'text':'🕵️ Последние 10'}],
-            [{'text':'📥 Excel'},{'text':'🔍 Тест трендов'}]
+            [{'text': '📆 Период'}],
+            [{'text': '➕ Добавить слово'}, {'text': '🔍 Тренды'}],
+            [{'text': '📥 Excel'}, {'text': '📊 Статус бота'}],
+            [{'text': '⏸️ Отключить'}, {'text': '▶️ Включить'}]
         ]
-        send_telegram('👋 Выбери действие:', reply_markup={'keyboard': kb, 'resize_keyboard': True})
-    elif text == '🔍 Тест трендов':
+        send_telegram("Привет! Выбери действие:", {'keyboard': kb, 'resize_keyboard': True})
+    elif text == '📆 Период':
+        inline = [[
+            {'text': '1 день', 'callback_data': 'tf_1d'},
+            {'text': '7 дней', 'callback_data': 'tf_7d'},
+            {'text': '30 дней', 'callback_data': 'tf_30d'}
+        ]]
+        send_telegram("Выберите период:", {'inline_keyboard': inline})
+    elif text == '➕ Добавить слово':
+        send_telegram("✍️ Отправь слово для отслеживания трендов:")
+    elif text.startswith('/add '):
+        kw = text.split('/add ',1)[1].strip()
+        if kw and kw not in KEYWORDS:
+            KEYWORDS.append(kw)
+            send_telegram(f"✅ Добавлено слово: {kw}")
+    elif text == '🔍 Тренды':
         check_trends()
-        send_telegram('🔍 Тренды обновлены — проверь логи.')
-    elif text == '📊 Статус бота':
-        send_telegram(
-            f"📡 ✅ Подключен\n"
-            f"🌍 {CURRENT_GEO}\n"
-            f"⏲ Интервал: {CHECK_INTERVAL//60} мин\n"
-            f"🔤 Отслежено запросов: {len(checked_queries)}"
-        )
-    elif text == '🕵️ Последние 10':
-        if recent_trends:
-            last = recent_trends[-10:]
-            msg = "\n".join([f"{i['time']} – {i['query']}" for i in last])
-            send_telegram(f"🧾 Последние 10 трендов:\n{msg}")
-        else:
-            send_telegram('Нет данных.')
+        send_telegram('🔍 Принудительный поиск трендов выполнен')
     elif text == '📥 Excel':
         path = export_to_xlsx()
         if path:
@@ -143,14 +139,21 @@ def webhook():
                 )
         else:
             send_telegram('Нет данных для экспорта.')
-    return {"ok": True}
+    elif text == '📊 Статус бота':
+        status = 'включён' if ENABLED else 'отключён'
+        send_telegram(
+            f"🤖 Статус: {status}\n"
+            f"🕒 Период: {CURRENT_TIMEFRAME}\n"
+            f"🔤 Слова: {', '.join(KEYWORDS) if KEYWORDS else '—'}"
+        )
+    elif text == '⏸️ Отключить':
+        ENABLED = False
+        send_telegram("🤖 Бот отключён")
+    elif text == '▶️ Включить':
+        ENABLED = True
+        send_telegram("🤖 Бот включён")
+    return {'ok': True}
 
 if __name__ == '__main__':
-    webhook_url = f'https://telegram-trends-bot.onrender.com/{TELEGRAM_TOKEN}'
-    try:
-        requests.get(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}')
-        log(f"Webhook установлен: {webhook_url}")
-    except Exception as e:
-        log(f"Ошибка webhook: {e}")
     threading.Thread(target=trends_loop, daemon=True).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
